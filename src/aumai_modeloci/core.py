@@ -100,7 +100,7 @@ class ModelPackager:
         self, config: OCIConfig, layers: list[ModelLayer]
     ) -> OCIManifest:
         """Build an OCIManifest from config and layer list."""
-        config_bytes = config.model_dump_json().encode("utf-8")
+        config_bytes = config.model_dump_json(indent=2).encode("utf-8")
         config_digest = _sha256_bytes(config_bytes)
 
         config_descriptor: dict[str, Any] = {
@@ -198,7 +198,19 @@ class ModelUnpackager:
         output.mkdir(parents=True, exist_ok=True)
 
         with tarfile.open(archive_path, "r") as tar:
-            tar.extractall(path=str(output))
+            try:
+                tar.extractall(path=str(output), filter="data")
+            except TypeError:
+                # Python <3.12 does not support the filter argument.
+                # Manually validate each member to prevent path traversal.
+                resolved_output = output.resolve()
+                for member in tar.getmembers():
+                    member_path = (resolved_output / member.name).resolve()
+                    if not str(member_path).startswith(str(resolved_output)):
+                        raise ValueError(
+                            f"Attempted path traversal in archive member: {member.name!r}"
+                        )
+                tar.extractall(path=str(output))  # noqa: S202
 
         config_file = output / _CONFIG_FILENAME
         if not config_file.exists():
